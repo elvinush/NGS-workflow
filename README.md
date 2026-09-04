@@ -7,8 +7,8 @@ samples instead of us typing every command per sample.
 Samples: `1GC`, `3GC`, `4GC`, `6GC`, `8GC`, `9GC` (paired end, gastric cancer
 RNA-seq from SRA).
 
-The reads are mapped twice, once against the human genome (GRCh38) and once
-against a transcriptome reference, and both go through the same variant calling
+The reads are mapped twice, once against human genome (GRCh38) and once
+against a transcriptome reference, both go through the same variant calling
 and filtering.
 
 ## What it does
@@ -34,8 +34,8 @@ raw fastq
 ## Running it
 
 Everything is hardcoded for the DTU pupil server, all the tool paths are at the
-top of the Snakefile. If you want to run it somewhere else you have to change
-those first (and the reference/dbsnp paths).
+top of the Snakefile. To run somewhere else, these would have to be adjusted
+accordingly (and the reference/dbsnp paths).
 
 ```
 snakemake -j 1 -p --keep-going
@@ -49,7 +49,7 @@ Expected layout:
 ```
 final_project/
   Snakefile
-  raw_data/     <- the subsampled fastq files go here
+  raw_data/     <- subsampled fastq files here
   fastqc/
   trimmed/
   mapped/
