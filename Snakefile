@@ -1,261 +1,424 @@
-# Snakefile for the 22126 NGS final project (group 14)
-#
-# Basically all the commands from our notes glued together so we don't have to
-# run them one sample at a time and copy paste the paths every single time.
-# Everything is hardcoded for the pupil server (/home/ctools, /home/databases,
-# ...) so it will not run anywhere else unless the paths below are changed.
-#
-# how we ran it:
-#   snakemake -j 1 -p --keep-going
-#
-# the fastq files in raw_data/ are already subsampled to the first 1M reads,
-# see the README for that command.
+#Snakefile for the 22126 NGS final project (group 14)
+#All the commands from our notes put together so we don't have to run them
+#one sample at a time and copy paste the paths every time.
 
-SAMPLES = ["1GC", "3GC", "4GC", "6GC", "8GC", "9GC"]
+#Everything is hardcoded for the pupil server (/home/ctools, /home/databases),
+#so it only runs there.
 
-PROJ = "/home/projects/22126_NGS/projects/group14/final_project"
+#How we ran it:
+#	snakemake -np
+#	snakemake --jobs 1
 
-# we mapped everything twice, once against the genome and once against the
-# transcriptome, so most of the rules have a {ref} wildcard
-REFS = {
-    "genome": "/home/databases/references/human/GRCh38_full_analysis_set_plus_decoy_hla.fa",
-    "transcriptome": PROJ + "/ref_transcriptome/transcriptome.fa",
-}
+#The files in raw_data/ are already cut down to the first 1M reads, see README.
 
-DBSNP = "/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
-MAPPABILITY = "/home/databases/databases/GRCh38/filter99.bed.gz"
-SNPEFF_DATA = "/home/databases/databases/snpEff/"
+#We mapped everything twice, once against the genome and once against the
+#transcriptome, so most steps are in here twice.
 
-# nothing is in $PATH on the server so we need the full path for most tools
-FASTQC = "/home/ctools/FastQC/fastqc"
-TRIMMOMATIC = "/home/ctools/Trimmomatic-0.39/trimmomatic-0.39.jar"
-ADAPTERS = "/home/ctools/Trimmomatic-0.39/adapters/TruSeq2-PE.fa"
-PICARD = "/home/ctools/picard_2.23.8/picard.jar"
-GATK = "/home/ctools/gatk-4.6.2.0/gatk"
-TABIX = "/home/ctools/htslib-1.20/tabix"
-BGZIP = "/home/ctools/htslib-1.20/bgzip"
-BCFTOOLS = "/home/ctools/bcftools-1.23/bcftools"
-SNPEFF = "/home/ctools/snpEff/snpEff.jar"
-# bwa, samtools and bedtools were already there so we just call them directly
-
-# without this the two fastqc rules are ambiguous, because "1_pair" also
-# matches the {r} wildcard
-wildcard_constraints:
-    sample = "[0-9]+GC",
-    r = "[12]",
-    ref = "genome|transcriptome"
-
+ids = ["1GC", "3GC", "4GC", "6GC", "8GC", "9GC"]
 
 rule all:
-    input:
-        expand("fastqc/{sample}_sub{r}_fastqc.html", sample=SAMPLES, r=[1, 2]),
-        expand("fastqc/{sample}_sub{r}_pair_fastqc.html", sample=SAMPLES, r=[1, 2]),
-        expand("annotation/{sample}_{ref}_annotation.vcf.gz", sample=SAMPLES, ref=REFS),
-        expand("stats/{sample}_{ref}_filtered.txt", sample=SAMPLES, ref=REFS),
-        expand("stats/{sample}_{ref}_pass_map99.txt", sample=SAMPLES, ref=REFS),
+	input:
+		expand("fastqc/raw/{sample}_sub1_fastqc.html", sample=ids),
+		expand("fastqc/trimmed/{sample}_sub1_pair_fastqc.html", sample=ids),
+		expand("annotation/{sample}_genome_annotation.vcf.gz", sample=ids),
+		expand("annotation/{sample}_transcriptome_annotation.vcf.gz", sample=ids)
 
 
-# --------------------------------------------------------- QC and trimming
+#### Quality control and trimming ####
 
-rule fastqc_raw:
-    input:
-        "raw_data/{sample}_sub{r}.fastq.gz"
-    output:
-        "fastqc/{sample}_sub{r}_fastqc.html",
-        "fastqc/{sample}_sub{r}_fastqc.zip"
-    shell:
-        "{FASTQC} {input} -o fastqc"
+rule quality_check_raw:
+	input:
+		read_1="raw_data/{sample}_sub1.fastq.gz",
+		read_2="raw_data/{sample}_sub2.fastq.gz"
+	output:
+		"fastqc/raw/{sample}_sub1_fastqc.html",
+		"fastqc/raw/{sample}_sub2_fastqc.html"
+	params:
+		outdir="fastqc/raw"
+	message: "Quality check of the raw reads of {wildcards.sample} with FastQC"
+	shell:
+		"""
+		/home/ctools/FastQC/fastqc {input} -o {params.outdir}
+		"""
 
+rule trimming:
+	input:
+		read_1="raw_data/{sample}_sub1.fastq.gz",
+		read_2="raw_data/{sample}_sub2.fastq.gz"
+	output:
+		pair_1="trimmed/{sample}_sub1_pair.fastq.gz",
+		unpair_1="trimmed/{sample}_sub1_unpair.fastq.gz",
+		pair_2="trimmed/{sample}_sub2_pair.fastq.gz",
+		unpair_2="trimmed/{sample}_sub2_unpair.fastq.gz"
+	params:
+		adapters="/home/ctools/Trimmomatic-0.39/adapters/TruSeq2-PE.fa"
+	message: "Trimming the adapters and bad quality bases of {wildcards.sample}"
+	shell:
+		"""
+		java -jar /home/ctools/Trimmomatic-0.39/trimmomatic-0.39.jar \
+		    PE -threads 1 -phred33 \
+		    {input.read_1} {input.read_2} \
+		    {output.pair_1} {output.unpair_1} \
+		    {output.pair_2} {output.unpair_2} \
+		    ILLUMINACLIP:{params.adapters}:2:30:10 \
+		    LEADING:5 TRAILING:5 SLIDINGWINDOW:4:15 MINLEN:50
+		"""
 
-rule trimmomatic:
-    input:
-        r1 = "raw_data/{sample}_sub1.fastq.gz",
-        r2 = "raw_data/{sample}_sub2.fastq.gz"
-    output:
-        p1 = "trimmed/{sample}_sub1_pair.fastq.gz",
-        u1 = "trimmed/{sample}_sub1_unpair.fastq.gz",
-        p2 = "trimmed/{sample}_sub2_pair.fastq.gz",
-        u2 = "trimmed/{sample}_sub2_unpair.fastq.gz"
-    shell:
-        "java -jar {TRIMMOMATIC} PE -threads 1 -phred33 "
-        "{input.r1} {input.r2} "
-        "{output.p1} {output.u1} {output.p2} {output.u2} "
-        "ILLUMINACLIP:{ADAPTERS}:2:30:10 "
-        "LEADING:5 TRAILING:5 SLIDINGWINDOW:4:15 MINLEN:50"
-
-
-# same thing as above but on the trimmed reads, to check the adapters are gone
-rule fastqc_trimmed:
-    input:
-        "trimmed/{sample}_sub{r}_pair.fastq.gz"
-    output:
-        "fastqc/{sample}_sub{r}_pair_fastqc.html",
-        "fastqc/{sample}_sub{r}_pair_fastqc.zip"
-    shell:
-        "{FASTQC} {input} -o fastqc"
-
-
-# --------------------------------------------------------- mapping
-
-rule bwa_mem:
-    input:
-        p1 = "trimmed/{sample}_sub1_pair.fastq.gz",
-        p2 = "trimmed/{sample}_sub2_pair.fastq.gz"
-    output:
-        "mapped/{sample}_{ref}.bam"
-    params:
-        fa = lambda w: REFS[w.ref]
-    shell:
-        "bwa mem {params.fa} {input.p1} {input.p2} "
-        "| samtools view -uS - | samtools sort /dev/stdin > {output}"
-
-
-# this sorts a second time which is a bit pointless since the pipe above
-# already sorts, but we kept it because that is how we did it in the exercise
-rule sort:
-    input:
-        "mapped/{sample}_{ref}.bam"
-    output:
-        "sorted/{sample}_{ref}_sorted.bam"
-    shell:
-        "samtools sort {input} > {output}"
+#Same as above but on the trimmed reads, to see if the adapters are gone.
+rule quality_check_trimmed:
+	input:
+		read_1="trimmed/{sample}_sub1_pair.fastq.gz",
+		read_2="trimmed/{sample}_sub2_pair.fastq.gz"
+	output:
+		"fastqc/trimmed/{sample}_sub1_pair_fastqc.html",
+		"fastqc/trimmed/{sample}_sub2_pair_fastqc.html"
+	params:
+		outdir="fastqc/trimmed"
+	message: "Quality check of the trimmed reads of {wildcards.sample} with FastQC"
+	shell:
+		"""
+		/home/ctools/FastQC/fastqc {input} -o {params.outdir}
+		"""
 
 
-# --------------------------------------------------------- postprocessing
+#### Mapping ####
 
-rule mark_duplicates:
-    input:
-        "sorted/{sample}_{ref}_sorted.bam"
-    output:
-        bam = "dedup/{sample}_{ref}_duplicates.bam",
-        metrics = "dedup/{sample}_{ref}_metrics.txt"
-    shell:
-        "java -jar {PICARD} MarkDuplicates "
-        "-I {input} -O {output.bam} -M {output.metrics}"
+rule mapping_genome:
+	input:
+		read_1="trimmed/{sample}_sub1_pair.fastq.gz",
+		read_2="trimmed/{sample}_sub2_pair.fastq.gz"
+	output:
+		"mapped/{sample}_genome.bam"
+	params:
+		ref="/home/databases/references/human/GRCh38_full_analysis_set_plus_decoy_hla.fa"
+	message: "Mapping {wildcards.sample} against the genome with bwa mem"
+	shell:
+		"""
+		bwa mem {params.ref} {input.read_1} {input.read_2} \
+		    | samtools view -uS - | samtools sort /dev/stdin > {output}
+		"""
 
-
-rule add_read_groups:
-    input:
-        "dedup/{sample}_{ref}_duplicates.bam"
-    output:
-        "dedup/{sample}_{ref}_duplicates.RG.bam"
-    shell:
-        "java -jar {PICARD} AddOrReplaceReadGroups -I {input} -O {output} "
-        "-RGID 1 -RGLB lib1 -RGPL ILLUMINA -RGPU unit1 -RGSM {wildcards.sample}"
-
-
-rule index_bam:
-    input:
-        "dedup/{sample}_{ref}_duplicates.RG.bam"
-    output:
-        "dedup/{sample}_{ref}_duplicates.RG.bam.bai"
-    shell:
-        "samtools index {input}"
-
-
-# --------------------------------------------------------- variant calling
-
-# in the notes we used the genome fasta here even for the transcriptome bam,
-# that was a copy paste mistake, so this takes whichever reference the reads
-# were actually mapped against
-rule haplotype_caller:
-    input:
-        bam = "dedup/{sample}_{ref}_duplicates.RG.bam",
-        bai = "dedup/{sample}_{ref}_duplicates.RG.bam.bai"
-    output:
-        "gvcf/{sample}_{ref}.gvcf.gz"
-    params:
-        fa = lambda w: REFS[w.ref]
-    shell:
-        '{GATK} --java-options "-Xmx10g" HaplotypeCaller '
-        "-R {params.fa} -I {input.bam} -O {output} "
-        "--dbsnp {DBSNP} -ERC GVCF"
+rule mapping_transcriptome:
+	input:
+		read_1="trimmed/{sample}_sub1_pair.fastq.gz",
+		read_2="trimmed/{sample}_sub2_pair.fastq.gz"
+	output:
+		"mapped/{sample}_transcriptome.bam"
+	params:
+		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa"
+	message: "Mapping {wildcards.sample} against the transcriptome with bwa mem"
+	shell:
+		"""
+		bwa mem {params.ref} {input.read_1} {input.read_2} \
+		    | samtools view -uS - | samtools sort /dev/stdin > {output}
+		"""
 
 
-rule index_gvcf:
-    input:
-        "gvcf/{sample}_{ref}.gvcf.gz"
-    output:
-        "gvcf/{sample}_{ref}.gvcf.gz.tbi"
-    shell:
-        "{TABIX} -f -p vcf {input}"
+#### Postprocessing ####
+
+#This sorts a second time even though the mapping already sorts, but we kept
+#it because that is how we did it in the exercise.
+
+rule sort_genome:
+	input:
+		"mapped/{sample}_genome.bam"
+	output:
+		"sorted/{sample}_genome_sorted.bam"
+	message: "Sorting the genome bam file of {wildcards.sample}"
+	shell:
+		"""
+		samtools sort {input} > {output}
+		"""
+
+rule sort_transcriptome:
+	input:
+		"mapped/{sample}_transcriptome.bam"
+	output:
+		"sorted/{sample}_transcriptome_sorted.bam"
+	message: "Sorting the transcriptome bam file of {wildcards.sample}"
+	shell:
+		"""
+		samtools sort {input} > {output}
+		"""
+
+rule mark_duplicates_genome:
+	input:
+		"sorted/{sample}_genome_sorted.bam"
+	output:
+		bam="dedup/{sample}_genome_duplicates.bam",
+		metrics="dedup/{sample}_genome_metrics.txt"
+	message: "Marking the duplicates in the genome bam file of {wildcards.sample}"
+	shell:
+		"""
+		java -jar /home/ctools/picard_2.23.8/picard.jar MarkDuplicates \
+		    -I {input} -O {output.bam} -M {output.metrics}
+		"""
+
+rule mark_duplicates_transcriptome:
+	input:
+		"sorted/{sample}_transcriptome_sorted.bam"
+	output:
+		bam="dedup/{sample}_transcriptome_duplicates.bam",
+		metrics="dedup/{sample}_transcriptome_metrics.txt"
+	message: "Marking the duplicates in the transcriptome bam file of {wildcards.sample}"
+	shell:
+		"""
+		java -jar /home/ctools/picard_2.23.8/picard.jar MarkDuplicates \
+		    -I {input} -O {output.bam} -M {output.metrics}
+		"""
+
+rule read_groups_genome:
+	input:
+		"dedup/{sample}_genome_duplicates.bam"
+	output:
+		"dedup/{sample}_genome_duplicates.RG.bam"
+	message: "Adding the read groups to the genome bam file of {wildcards.sample}"
+	shell:
+		"""
+		java -jar /home/ctools/picard_2.23.8/picard.jar AddOrReplaceReadGroups \
+		    -I {input} -O {output} \
+		    -RGID 1 -RGLB lib1 -RGPL ILLUMINA -RGPU unit1 -RGSM {wildcards.sample}
+		"""
+
+rule read_groups_transcriptome:
+	input:
+		"dedup/{sample}_transcriptome_duplicates.bam"
+	output:
+		"dedup/{sample}_transcriptome_duplicates.RG.bam"
+	message: "Adding the read groups to the transcriptome bam file of {wildcards.sample}"
+	shell:
+		"""
+		java -jar /home/ctools/picard_2.23.8/picard.jar AddOrReplaceReadGroups \
+		    -I {input} -O {output} \
+		    -RGID 1 -RGLB lib1 -RGPL ILLUMINA -RGPU unit1 -RGSM {wildcards.sample}
+		"""
+
+rule index_bam_genome:
+	input:
+		"dedup/{sample}_genome_duplicates.RG.bam"
+	output:
+		"dedup/{sample}_genome_duplicates.RG.bam.bai"
+	message: "Indexing the genome bam file of {wildcards.sample}"
+	shell:
+		"""
+		samtools index {input}
+		"""
+
+rule index_bam_transcriptome:
+	input:
+		"dedup/{sample}_transcriptome_duplicates.RG.bam"
+	output:
+		"dedup/{sample}_transcriptome_duplicates.RG.bam.bai"
+	message: "Indexing the transcriptome bam file of {wildcards.sample}"
+	shell:
+		"""
+		samtools index {input}
+		"""
 
 
-rule genotype_gvcf:
-    input:
-        gvcf = "gvcf/{sample}_{ref}.gvcf.gz",
-        tbi = "gvcf/{sample}_{ref}.gvcf.gz.tbi"
-    output:
-        "vcf/{sample}_{ref}.vcf.gz"
-    params:
-        fa = lambda w: REFS[w.ref]
-    shell:
-        "{GATK} GenotypeGVCFs -R {params.fa} -V {input.gvcf} -O {output} "
-        "--dbsnp {DBSNP}"
+#### Variant calling ####
+
+#In our notes we had the genome fasta here for the transcriptome as well,
+#but that was a copy paste mistake, so each one uses its own reference.
+
+rule haplotype_caller_genome:
+	input:
+		bam="dedup/{sample}_genome_duplicates.RG.bam",
+		bai="dedup/{sample}_genome_duplicates.RG.bam.bai"
+	output:
+		"gvcf/{sample}_genome.gvcf.gz"
+	params:
+		ref="/home/databases/references/human/GRCh38_full_analysis_set_plus_decoy_hla.fa",
+		dbsnp="/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+	message: "Calling the variants of {wildcards.sample} against the genome"
+	shell:
+		"""
+		/home/ctools/gatk-4.6.2.0/gatk --java-options "-Xmx10g" HaplotypeCaller \
+		    -R {params.ref} \
+		    -I {input.bam} \
+		    -O {output} \
+		    --dbsnp {params.dbsnp} \
+		    -ERC GVCF
+		"""
+
+rule haplotype_caller_transcriptome:
+	input:
+		bam="dedup/{sample}_transcriptome_duplicates.RG.bam",
+		bai="dedup/{sample}_transcriptome_duplicates.RG.bam.bai"
+	output:
+		"gvcf/{sample}_transcriptome.gvcf.gz"
+	params:
+		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa",
+		dbsnp="/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+	message: "Calling the variants of {wildcards.sample} against the transcriptome"
+	shell:
+		"""
+		/home/ctools/gatk-4.6.2.0/gatk --java-options "-Xmx10g" HaplotypeCaller \
+		    -R {params.ref} \
+		    -I {input.bam} \
+		    -O {output} \
+		    --dbsnp {params.dbsnp} \
+		    -ERC GVCF
+		"""
+
+rule index_gvcf_genome:
+	input:
+		"gvcf/{sample}_genome.gvcf.gz"
+	output:
+		"gvcf/{sample}_genome.gvcf.gz.tbi"
+	message: "Indexing the genome gvcf file of {wildcards.sample}"
+	shell:
+		"""
+		/home/ctools/htslib-1.20/tabix -f -p vcf {input}
+		"""
+
+rule index_gvcf_transcriptome:
+	input:
+		"gvcf/{sample}_transcriptome.gvcf.gz"
+	output:
+		"gvcf/{sample}_transcriptome.gvcf.gz.tbi"
+	message: "Indexing the transcriptome gvcf file of {wildcards.sample}"
+	shell:
+		"""
+		/home/ctools/htslib-1.20/tabix -f -p vcf {input}
+		"""
+
+rule genotype_genome:
+	input:
+		gvcf="gvcf/{sample}_genome.gvcf.gz",
+		tbi="gvcf/{sample}_genome.gvcf.gz.tbi"
+	output:
+		"vcf/{sample}_genome.vcf.gz"
+	params:
+		ref="/home/databases/references/human/GRCh38_full_analysis_set_plus_decoy_hla.fa",
+		dbsnp="/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+	message: "Making the genotype file of {wildcards.sample} for the genome"
+	shell:
+		"""
+		/home/ctools/gatk-4.6.2.0/gatk GenotypeGVCFs \
+		    -R {params.ref} \
+		    -V {input.gvcf} \
+		    -O {output} \
+		    --dbsnp {params.dbsnp}
+		"""
+
+rule genotype_transcriptome:
+	input:
+		gvcf="gvcf/{sample}_transcriptome.gvcf.gz",
+		tbi="gvcf/{sample}_transcriptome.gvcf.gz.tbi"
+	output:
+		"vcf/{sample}_transcriptome.vcf.gz"
+	params:
+		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa",
+		dbsnp="/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+	message: "Making the genotype file of {wildcards.sample} for the transcriptome"
+	shell:
+		"""
+		/home/ctools/gatk-4.6.2.0/gatk GenotypeGVCFs \
+		    -R {params.ref} \
+		    -V {input.gvcf} \
+		    -O {output} \
+		    --dbsnp {params.dbsnp}
+		"""
 
 
-# --------------------------------------------------------- filtering
+#### Filtering ####
 
-rule hard_filter:
-    input:
-        "vcf/{sample}_{ref}.vcf.gz"
-    output:
-        "hard_filtering/{sample}_{ref}_filtering.vcf.gz"
-    shell:
-        "{GATK} VariantFiltration -V {input} -O {output} "
-        '-filter "DP < 10.0" --filter-name "DP" '
-        '-filter "QUAL < 30.0" --filter-name "QUAL30" '
-        '-filter "SOR > 3.0" --filter-name "SOR3" '
-        '-filter "FS > 60.0" --filter-name "FS60" '
-        '-filter "MQ < 40.0" --filter-name "MQ40"'
+rule hard_filtering_genome:
+	input:
+		"vcf/{sample}_genome.vcf.gz"
+	output:
+		"hard_filtering/{sample}_genome_filtering.vcf.gz"
+	message: "Hard filtering the genome variants of {wildcards.sample}"
+	shell:
+		"""
+		/home/ctools/gatk-4.6.2.0/gatk VariantFiltration -V {input} -O {output} \
+		    -filter "DP < 10.0" --filter-name "DP" \
+		    -filter "QUAL < 30.0" --filter-name "QUAL30" \
+		    -filter "SOR > 3.0" --filter-name "SOR3" \
+		    -filter "FS > 60.0" --filter-name "FS60" \
+		    -filter "MQ < 40.0" --filter-name "MQ40"
+		"""
+
+rule hard_filtering_transcriptome:
+	input:
+		"vcf/{sample}_transcriptome.vcf.gz"
+	output:
+		"hard_filtering/{sample}_transcriptome_filtering.vcf.gz"
+	message: "Hard filtering the transcriptome variants of {wildcards.sample}"
+	shell:
+		"""
+		/home/ctools/gatk-4.6.2.0/gatk VariantFiltration -V {input} -O {output} \
+		    -filter "DP < 10.0" --filter-name "DP" \
+		    -filter "QUAL < 30.0" --filter-name "QUAL30" \
+		    -filter "SOR > 3.0" --filter-name "SOR3" \
+		    -filter "FS > 60.0" --filter-name "FS60" \
+		    -filter "MQ < 40.0" --filter-name "MQ40"
+		"""
+
+rule mappability_genome:
+	input:
+		"hard_filtering/{sample}_genome_filtering.vcf.gz"
+	output:
+		"hard_filtering/{sample}_genome_filtering_map99.vcf.gz"
+	params:
+		bed="/home/databases/databases/GRCh38/filter99.bed.gz"
+	message: "Filtering the genome variants of {wildcards.sample} by mappability"
+	shell:
+		"""
+		bedtools intersect -header -a {input} -b {params.bed} \
+		    | /home/ctools/htslib-1.20/bgzip -c > {output}
+		"""
+
+rule mappability_transcriptome:
+	input:
+		"hard_filtering/{sample}_transcriptome_filtering.vcf.gz"
+	output:
+		"hard_filtering/{sample}_transcriptome_filtering_map99.vcf.gz"
+	params:
+		bed="/home/databases/databases/GRCh38/filter99.bed.gz"
+	message: "Filtering the transcriptome variants of {wildcards.sample} by mappability"
+	shell:
+		"""
+		bedtools intersect -header -a {input} -b {params.bed} \
+		    | /home/ctools/htslib-1.20/bgzip -c > {output}
+		"""
 
 
-# how many sites were filtered out, and which filters failed.
-# the "|| true" is there because grep exits with 1 when it finds nothing and
-# then snakemake kills the whole run
-rule filter_stats:
-    input:
-        "hard_filtering/{sample}_{ref}_filtering.vcf.gz"
-    output:
-        "stats/{sample}_{ref}_filtered.txt"
-    shell:
-        "( {BCFTOOLS} view -H {input} | grep -v PASS | wc -l ; "
-        "{BCFTOOLS} view -H {input} | grep -v PASS | cut -f7 "
-        "| sort | uniq -c | sort -n ) > {output} || true"
+#### Annotation ####
 
+rule annotation_genome:
+	input:
+		"hard_filtering/{sample}_genome_filtering_map99.vcf.gz"
+	output:
+		vcf="annotation/{sample}_genome_annotation.vcf.gz",
+		html="annotation/{sample}_genome_annotation.html"
+	params:
+		datadir="/home/databases/databases/snpEff/"
+	message: "Annotating the genome variants of {wildcards.sample} with snpEff"
+	shell:
+		"""
+		java -jar /home/ctools/snpEff/snpEff.jar eff \
+		    -dataDir {params.datadir} \
+		    -htmlStats {output.html} \
+		    GRCh38.99 {input} \
+		    | /home/ctools/htslib-1.20/bgzip -c > {output.vcf}
+		"""
 
-rule mappability_filter:
-    input:
-        "hard_filtering/{sample}_{ref}_filtering.vcf.gz"
-    output:
-        "hard_filtering/{sample}_{ref}_filtering_map99.vcf.gz"
-    shell:
-        "bedtools intersect -header -a {input} -b {MAPPABILITY} "
-        "| {BGZIP} -c > {output}"
-
-
-rule pass_after_mappability:
-    input:
-        "hard_filtering/{sample}_{ref}_filtering_map99.vcf.gz"
-    output:
-        "stats/{sample}_{ref}_pass_map99.txt"
-    shell:
-        "{BCFTOOLS} view -H {input} | grep PASS | wc -l > {output} || true"
-
-
-# --------------------------------------------------------- annotation
-
-rule snpeff:
-    input:
-        "hard_filtering/{sample}_{ref}_filtering_map99.vcf.gz"
-    output:
-        vcf = "annotation/{sample}_{ref}_annotation.vcf.gz",
-        html = "annotation/{sample}_{ref}_annotation.html"
-    shell:
-        "java -jar {SNPEFF} eff -dataDir {SNPEFF_DATA} "
-        "-htmlStats {output.html} GRCh38.99 {input} "
-        "| {BGZIP} -c > {output.vcf}"
-
-
-# we also counted the total number of annotations per sample but that we did
-# by hand afterwards, see count_annotations.sh
+rule annotation_transcriptome:
+	input:
+		"hard_filtering/{sample}_transcriptome_filtering_map99.vcf.gz"
+	output:
+		vcf="annotation/{sample}_transcriptome_annotation.vcf.gz",
+		html="annotation/{sample}_transcriptome_annotation.html"
+	params:
+		datadir="/home/databases/databases/snpEff/"
+	message: "Annotating the transcriptome variants of {wildcards.sample} with snpEff"
+	shell:
+		"""
+		java -jar /home/ctools/snpEff/snpEff.jar eff \
+		    -dataDir {params.datadir} \
+		    -htmlStats {output.html} \
+		    GRCh38.99 {input} \
+		    | /home/ctools/htslib-1.20/bgzip -c > {output.vcf}
+		"""

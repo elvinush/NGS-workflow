@@ -33,16 +33,18 @@ raw fastq
 
 ## Running it
 
-Everything is hardcoded for the DTU pupil server, all the tool paths are at the
-top of the Snakefile. To run somewhere else, these would have to be adjusted
-accordingly (and the reference/dbsnp paths).
+Everything is hardcoded for the DTU pupil server, the tool paths are written
+into the rules. To run somewhere else, these would have to be adjusted
+accordingly (and the reference/dbsnp paths in the params).
 
 ```
-snakemake -j 1 -p --keep-going
+snakemake -np
+snakemake --jobs 1
 ```
 
-We only had one thread on the server so there is not much point in giving it
-more. `snakemake -n` for a dry run.
+The first one is a dry run to check what it would do, the second one actually
+runs it. We only had one thread on the server so there is no point in giving it
+more jobs.
 
 Expected layout:
 
@@ -59,7 +61,6 @@ final_project/
   vcf/
   hard_filtering/
   annotation/
-  stats/
 ```
 
 ## Things we did by hand and did not put in the Snakefile
@@ -83,6 +84,19 @@ Making the project folder writable for everyone in the group:
 chmod -R a+rw /home/projects/22126_NGS/projects/group14/final_project
 find /home/projects/22126_NGS/projects/group14/final_project -type d -exec chmod 1777 {} \;
 find /home/projects/22126_NGS/projects/group14/final_project -type f -exec chmod 666 {} \;
+```
+
+Counting how many sites did not pass the filters, and which filters they failed:
+
+```
+/home/ctools/bcftools-1.23/bcftools view -H 1GC_genome_filtering.vcf.gz | grep -v PASS | wc -l
+/home/ctools/bcftools-1.23/bcftools view -H 1GC_genome_filtering.vcf.gz | grep -v PASS | cut -f7 | sort | uniq -c | sort -n
+```
+
+Counting how many variants are left after the mappability filter:
+
+```
+/home/ctools/bcftools-1.23/bcftools view -H 1GC_genome_filtering_map99.vcf.gz | grep PASS | wc -l
 ```
 
 Counting annotations, see `count_annotations.sh`.
