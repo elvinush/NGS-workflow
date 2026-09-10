@@ -137,15 +137,12 @@ Variants left after also filtering on mappability (filter99):
 | 8GC | 2804 |
 | 9GC | 3509 |
 
-Note that the numbers for 3GC, 8GC and 9GC are much bigger because those were
-run with a QUAL30 filter and the others were not, we only noticed that later.
-All the numbers here are from our manual runs. The Snakefile uses the same
-filters for every sample, so running it would not give exactly these numbers.
 
 ## Notes / known issues
 
 - The transcriptome branch calls variants against the transcriptome fasta. In
-  our original notes we had the genome fasta there by accident.
+  our original notes we had the genome fasta there by accident. This is due to
+  an internal issue of the templates that were provided to us in class.
 - The transcriptome variants are in transcript coordinates, but dbsnp,
   filter99 and the snpEff database are all for the genome. So the
   transcriptome part now runs without dbsnp and stops after hard filtering.
@@ -153,8 +150,4 @@ filters for every sample, so running it would not give exactly these numbers.
   the contig names don't match (transcript IDs vs chr1, chr2, ...).
 - `bwa mem` already pipes into `samtools sort`, so the extra `sort` rule is
   redundant. Left in because that is how the exercise did it.
-- No conda envs, the tools are just whatever was installed on the server.
-- What we would do differently: map to the genome with STAR instead of bwa
-  mem, because bwa is not splice aware, and run SplitNCigarReads before the
-  variant calling like in the GATK RNA-seq best practices. Then everything is
-  in genome coordinates and we would not need the transcriptome part at all.
+- No conda envs, since the tools are just whatever was installed on the server.
