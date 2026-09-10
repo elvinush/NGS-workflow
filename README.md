@@ -137,6 +137,9 @@ Variants left after also filtering on mappability (filter99):
 | 8GC | 2804 |
 | 9GC | 3509 |
 
+The numbers for 3GC, 8GC and 9GC are much larger because those were run with a 
+QUAL30 filter and the others were not. We only noticed afterwards. The Snakefile 
+applies the same filters to every sample.
 
 ## Notes / known issues
 
