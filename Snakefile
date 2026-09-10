@@ -12,7 +12,9 @@
 #The files in raw_data/ are already cut down to the first 1M reads, see README.
 
 #We mapped everything twice, once against the genome and once against the
-#transcriptome, so most steps are in here twice.
+#transcriptome, so most steps are in here twice. The transcriptome part stops
+#after hard filtering, since dbsnp, filter99 and snpEff only work with genome
+#coordinates.
 
 ids = ["1GC", "3GC", "4GC", "6GC", "8GC", "9GC"]
 
@@ -21,7 +23,7 @@ rule all:
 		expand("fastqc/raw/{sample}_sub1_fastqc.html", sample=ids),
 		expand("fastqc/trimmed/{sample}_sub1_pair_fastqc.html", sample=ids),
 		expand("annotation/{sample}_genome_annotation.vcf.gz", sample=ids),
-		expand("annotation/{sample}_transcriptome_annotation.vcf.gz", sample=ids)
+		expand("hard_filtering/{sample}_transcriptome_filtering.vcf.gz", sample=ids)
 
 
 #### Quality control and trimming ####
@@ -248,8 +250,7 @@ rule haplotype_caller_transcriptome:
 	output:
 		"gvcf/{sample}_transcriptome.gvcf.gz"
 	params:
-		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa",
-		dbsnp="/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa"
 	message: "Calling the variants of {wildcards.sample} against the transcriptome"
 	shell:
 		"""
@@ -257,7 +258,6 @@ rule haplotype_caller_transcriptome:
 		    -R {params.ref} \
 		    -I {input.bam} \
 		    -O {output} \
-		    --dbsnp {params.dbsnp} \
 		    -ERC GVCF
 		"""
 
@@ -309,16 +309,14 @@ rule genotype_transcriptome:
 	output:
 		"vcf/{sample}_transcriptome.vcf.gz"
 	params:
-		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa",
-		dbsnp="/home/databases/databases/GRCh38/Homo_sapiens_assembly38.dbsnp138.vcf.gz"
+		ref="/home/projects/22126_NGS/projects/group14/final_project/ref_transcriptome/transcriptome.fa"
 	message: "Making the genotype file of {wildcards.sample} for the transcriptome"
 	shell:
 		"""
 		/home/ctools/gatk-4.6.2.0/gatk GenotypeGVCFs \
 		    -R {params.ref} \
 		    -V {input.gvcf} \
-		    -O {output} \
-		    --dbsnp {params.dbsnp}
+		    -O {output}
 		"""
 
 
@@ -370,20 +368,6 @@ rule mappability_genome:
 		    | /home/ctools/htslib-1.20/bgzip -c > {output}
 		"""
 
-rule mappability_transcriptome:
-	input:
-		"hard_filtering/{sample}_transcriptome_filtering.vcf.gz"
-	output:
-		"hard_filtering/{sample}_transcriptome_filtering_map99.vcf.gz"
-	params:
-		bed="/home/databases/databases/GRCh38/filter99.bed.gz"
-	message: "Filtering the transcriptome variants of {wildcards.sample} by mappability"
-	shell:
-		"""
-		bedtools intersect -header -a {input} -b {params.bed} \
-		    | /home/ctools/htslib-1.20/bgzip -c > {output}
-		"""
-
 
 #### Annotation ####
 
@@ -396,24 +380,6 @@ rule annotation_genome:
 	params:
 		datadir="/home/databases/databases/snpEff/"
 	message: "Annotating the genome variants of {wildcards.sample} with snpEff"
-	shell:
-		"""
-		java -jar /home/ctools/snpEff/snpEff.jar eff \
-		    -dataDir {params.datadir} \
-		    -htmlStats {output.html} \
-		    GRCh38.99 {input} \
-		    | /home/ctools/htslib-1.20/bgzip -c > {output.vcf}
-		"""
-
-rule annotation_transcriptome:
-	input:
-		"hard_filtering/{sample}_transcriptome_filtering_map99.vcf.gz"
-	output:
-		vcf="annotation/{sample}_transcriptome_annotation.vcf.gz",
-		html="annotation/{sample}_transcriptome_annotation.html"
-	params:
-		datadir="/home/databases/databases/snpEff/"
-	message: "Annotating the transcriptome variants of {wildcards.sample} with snpEff"
 	shell:
 		"""
 		java -jar /home/ctools/snpEff/snpEff.jar eff \

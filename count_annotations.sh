@@ -6,7 +6,8 @@
 VCF=$1
 
 zgrep -v "^#" $VCF \
-| awk -F'\t' '{for(i=1;i<=NF;i++) if($i ~ /^ANN=/) print $i}' \
+| cut -f8 \
+| grep -o 'ANN=[^;]*' \
 | sed 's/^ANN=//' \
 | tr ',' '\n' \
 | wc -l
