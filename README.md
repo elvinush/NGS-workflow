@@ -5,7 +5,7 @@ we used for the final project, rewritten as a Snakefile so it runs over all six
 samples instead of us typing every command per sample.
 
 Samples: `1GC`, `3GC`, `4GC`, `6GC`, `8GC`, `9GC` (paired end, gastric cancer
-RNA-seq from SRA).
+WES from SRA).
 
 The reads are mapped twice, once against human genome (GRCh38) and once
 against a transcriptome reference, both go through the same variant calling
