@@ -146,11 +146,6 @@ applies the same filters to every sample.
 - The transcriptome branch calls variants against the transcriptome fasta. In
   our original notes we had the genome fasta there by accident. This is due to
   an internal issue of the templates that were provided to us in class.
-- The transcriptome variants are in transcript coordinates, but dbsnp,
-  filter99 and the snpEff database are all for the genome. So the
-  transcriptome part now runs without dbsnp and stops after hard filtering.
-  Before, it also went through bedtools and snpEff, which can't work because
-  the contig names don't match (transcript IDs vs chr1, chr2, ...).
 - `bwa mem` already pipes into `samtools sort`, so the extra `sort` rule is
   redundant. Left in because that is how the exercise did it.
 - No conda envs, since the tools are just whatever was installed on the server.
